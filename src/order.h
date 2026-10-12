@@ -9,6 +9,7 @@
 #include "restaurant.h"
 #include "delivery_driver.h"
 #include "order_state.h"
+#include "fee_policy.h"
 
 using namespace std;
 
@@ -19,6 +20,7 @@ private:
     int id;
     const Restaurant* restaurant;
     Location destination;
+    const FeePolicy* policy;
     MenuItem* items[MAX_ITEMS];
     int itemCount;
     OrderState state;
@@ -44,8 +46,8 @@ private:
     }
 
 public:
-    Order(int orderId, const Restaurant* r, Location dest)
-        : id(orderId), restaurant(r), destination(dest),
+    Order(int orderId, const Restaurant* r, Location dest, const FeePolicy* p)
+        : id(orderId), restaurant(r), destination(dest), policy(p),
           itemCount(0), state(PLACED), driver(0) {}
     Order(const Order&) = delete;
     Order& operator=(const Order&) = delete;
@@ -65,11 +67,16 @@ public:
         items[itemCount++] = item;
     }
 
+    void setFeePolicy(const FeePolicy* p) { policy = p; }
+
     long long subtotal() const {
         long long sum = 0;
         for (int i = 0; i < itemCount; i++) sum += items[i]->getPrice();
         return sum;
     }
+    double distance() const { return distanceKm(restaurant->getLocation(), destination); }
+    long long deliveryFee() const { return policy->fee(distance()); }
+    long long total() const { return subtotal() + deliveryFee(); }
 
     void confirm() { moveTo(CONFIRMED); }
     void startPreparing() { moveTo(PREPARING); }
@@ -103,6 +110,9 @@ public:
             cout << "  - " << items[i]->getName() << ": " << items[i]->getPrice() << " VND" << endl;
         }
         cout << "  Subtotal: " << subtotal() << " VND" << endl;
+        cout << "  Distance: " << distance() << " km, fee (" << policy->name() << "): "
+             << deliveryFee() << " VND" << endl;
+        cout << "  TOTAL: " << total() << " VND" << endl;
         if (driver != 0) cout << "  Driver: " << driver->getName() << endl;
     }
 };
