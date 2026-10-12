@@ -78,7 +78,10 @@ public:
     long long deliveryFee() const { return policy->fee(distance()); }
     long long total() const { return subtotal() + deliveryFee(); }
 
-    void confirm() { moveTo(CONFIRMED); }
+    void confirm() {
+        if (itemCount == 0) throw runtime_error("Cannot confirm an empty order");
+        moveTo(CONFIRMED);
+    }
     void startPreparing() { moveTo(PREPARING); }
     void cancel() { moveTo(CANCELLED); }
 

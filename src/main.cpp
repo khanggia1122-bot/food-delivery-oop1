@@ -114,11 +114,49 @@ void testPolymorphism() {
     cout << "Total changed: " << totalNormal << " -> " << o.total() << " VND" << endl;
 }
 
+void testEdgeCases() {
+    cout << "=== TEST 4: Edge cases ===" << endl;
+    Restaurant r("Pho 24", Location{0, 0});
+    r.addMenuItem("Pho Bo", 50000);
+    DistanceFee fee(10000, 4000);
+    DriverAssigner assigner;
+
+    Order empty(5, &r, Location{3, 4}, &fee);
+    try { empty.confirm(); printResult("Confirm an empty order", false, ""); }
+    catch (const exception& e) { printResult("Confirm an empty order", true, e.what()); }
+
+    try { r.createItem(-1); printResult("Invalid menu index", false, ""); }
+    catch (const exception& e) { printResult("Invalid menu index", true, e.what()); }
+
+    Restaurant big("Big", Location{0, 0});
+    for (int i = 0; i < MAX_MENU; i++) big.addMenuItem("Item", 1000);
+    try { big.addMenuItem("Extra", 1000); printResult("Add item to full menu", false, ""); }
+    catch (const exception& e) { printResult("Add item to full menu", true, e.what()); }
+
+    Order full(6, &r, Location{3, 4}, &fee);
+    for (int i = 0; i < MAX_ITEMS; i++) full.addItem(r.createItem(0));
+    try { full.addItem(r.createItem(0)); printResult("Add item to full order", false, ""); }
+    catch (const exception& e) { printResult("Add item to full order", true, e.what()); }
+
+    DeliveryDriver an("An", Location{1, 1});
+    an.reserve();
+    DeliveryDriver* drivers[MAX_DRIVERS] = {&an};
+    Order o(7, &r, Location{3, 4}, &fee);
+    o.addItem(r.createItem(0));
+    o.confirm();
+    o.startPreparing();
+    try { assigner.assign(o, drivers, 1); printResult("No available driver", false, ""); }
+    catch (const exception& e) { printResult("No available driver", true, e.what()); }
+    cout << "  Order state unchanged after failed assignment: " << stateName(o.getState()) << endl;
+}
+
 int main() {
     testHappyPath();
     cout << endl;
     testValidation();
     cout << endl;
     testPolymorphism();
+    cout << endl;
+    testEdgeCases();
     return 0;
 }
