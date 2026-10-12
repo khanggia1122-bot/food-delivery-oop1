@@ -114,11 +114,23 @@ void testPolymorphism() {
     cout << "Total changed: " << totalNormal << " -> " << o.total() << " VND" << endl;
 }
 
+void testFeeValidation() {
+    cout << "=== TEST 4: Fee policy validation ===" << endl;
+    try { DistanceFee bad(-1000, 4000); printResult("Negative base fee", false, ""); }
+    catch (const exception& e) { printResult("Negative base fee", true, e.what()); }
+
+    DistanceFee ok(10000, 4000);
+    try { SurgeFee bad(&ok, 0); printResult("Surge percent = 0", false, ""); }
+    catch (const exception& e) { printResult("Surge percent = 0", true, e.what()); }
+}
+
 int main() {
     testHappyPath();
     cout << endl;
     testValidation();
     cout << endl;
     testPolymorphism();
+    cout << endl;
+    testFeeValidation();
     return 0;
 }

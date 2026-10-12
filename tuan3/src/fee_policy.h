@@ -2,6 +2,7 @@
 #define FEE_POLICY_H
 
 #include <string>
+#include <stdexcept>
 
 using namespace std;
 
@@ -17,7 +18,9 @@ private:
     long long baseFee;
     long long perKm;
 public:
-    DistanceFee(long long b, long long p) : baseFee(b), perKm(p) {}
+    DistanceFee(long long b, long long p) : baseFee(b), perKm(p) {
+        if (b < 0 || p < 0) throw invalid_argument("Fees must not be negative");
+    }
     long long fee(double km) const { return baseFee + (long long)(perKm * km + 0.5); }
     string name() const { return "DistanceFee"; }
 };
@@ -27,7 +30,9 @@ private:
     const FeePolicy* inner;
     int percent;
 public:
-    SurgeFee(const FeePolicy* i, int pct) : inner(i), percent(pct) {}
+    SurgeFee(const FeePolicy* i, int pct) : inner(i), percent(pct) {
+        if (pct <= 0) throw invalid_argument("Surge percent must be positive");
+    }
     long long fee(double km) const { return inner->fee(km) * percent / 100; }
     string name() const { return "SurgeFee(" + inner->name() + " x" + to_string(percent) + "%)"; }
 };
