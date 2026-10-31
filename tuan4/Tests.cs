@@ -1,6 +1,7 @@
 using FoodDelivery.Dispatch;
 using FoodDelivery.Domain;
 using FoodDelivery.Pricing;
+using FoodDelivery.Payment;
 
 namespace FoodDelivery;
 
@@ -15,6 +16,9 @@ public static class Tests
         LifecycleTests();
         ValidationTests();
         PolymorphismTests();
+        PaymentFlowTests();
+        PaymentMethodTests();
+        ExtensibilityTests();
 
         Console.WriteLine();
         Console.WriteLine($"Result: {passed} passed, {failed} failed");
@@ -62,6 +66,7 @@ public static class Tests
 
     private static void SettlePayment(Order order)
     {
+        new PaymentProcessor().Pay(order, new CashPayment(order.Total));
     }
 
     private static Order OrderInPreparing(Restaurant r, int id = 1)
@@ -203,4 +208,127 @@ public static class Tests
         Check(sum == 110000, "Plain and decorated items are used the same way through IMenuItem");
     }
 
+    private static Order OrderConfirmed(Restaurant r, int id)
+    {
+        Order order = NewOrder(r, id);
+        order.Confirm();
+        return order;
+    }
+
+    private static void PaymentFlowTests()
+    {
+        Console.WriteLine("=== TEST 5: Payment process (Strategy + Observer) ===");
+        Restaurant r = NewRestaurant();
+        var output = new StringWriter();
+        var processor = new PaymentProcessor();
+        new ReceiptPrinter(output).Subscribe(processor);
+
+        var wallet = new EWalletPayment("Khang", 500000);
+        Order a = OrderConfirmed(r, 1);
+        PaymentRecord record = processor.Pay(a, wallet);
+        Check(a.PaymentStatus == PaymentStatus.Paid && a.Payment == record && record.Amount == 129000, "Wallet pays the order total (129000 VND)");
+        Check(wallet.Balance == 500000 - 129000, "Wallet balance is reduced by the total");
+        Check(output.ToString().Contains("Order #1 paid 129000"), "Observer: the receipt printer was notified once payment completed");
+        Throws<InvalidOperationException>(() => processor.Pay(a, wallet), "Paying the same order twice is rejected");
+
+        Order placed = NewOrder(r, 2);
+        Throws<InvalidOperationException>(() => processor.Pay(placed, new EWalletPayment("K", 500000)), "Prepaid method is rejected while the order is only Placed");
+        Throws<InvalidOperationException>(() => processor.Pay(OrderConfirmed(r, 3), new CashPayment(200000)), "Cash on delivery is rejected before delivery starts");
+
+        var poor = new EWalletPayment("Poor", 100000);
+        Order c = OrderConfirmed(r, 4);
+        int linesBefore = output.ToString().Split('\n').Length;
+        Throws<PaymentDeclinedException>(() => processor.Pay(c, poor), "Insufficient balance is declined");
+        Check(c.PaymentStatus == PaymentStatus.Unpaid && poor.Balance == 100000, "Declined payment changes nothing: order unpaid, balance untouched");
+        Check(output.ToString().Split('\n').Length == linesBefore, "No receipt is printed for a declined payment");
+
+        Order d = OrderInPreparing(r, 5);
+        d.Dispatch(new DeliveryDriver("An", new Location(1, 1)));
+        Throws<InvalidOperationException>(d.Deliver, "Delivering an unpaid order is rejected");
+        Check(d.State == OrderState.OutForDelivery, "Order stays OutForDelivery after the rejected delivery");
+        var cash = new CashPayment(150000);
+        processor.Pay(d, cash);
+        Check(cash.ChangeDue == 150000 - 129000, "Cash payment at the door computes the change (21000)");
+        d.Deliver();
+        Check(d.State == OrderState.Delivered, "Paid order can be delivered");
+
+        Order e = OrderConfirmed(r, 6);
+        var wallet2 = new EWalletPayment("Lan", 300000);
+        processor.Pay(e, wallet2);
+        processor.CancelWithRefund(e);
+        Check(e.State == OrderState.Cancelled && e.PaymentStatus == PaymentStatus.Refunded && wallet2.Balance == 300000, "Cancel while Confirmed refunds the wallet in full");
+        Check(output.ToString().Contains("Order #6 refunded 129000"), "Observer: refund notification was sent");
+
+        Order f = OrderConfirmed(r, 7);
+        var wallet3 = new EWalletPayment("Minh", 300000);
+        processor.Pay(f, wallet3);
+        f.StartPreparing();
+        Throws<InvalidOrderTransitionException>(() => processor.CancelWithRefund(f), "Cancel with refund is rejected once cooking has started");
+        Check(f.PaymentStatus == PaymentStatus.Paid && wallet3.Balance == 300000 - 129000, "Rejected cancel does not refund: payment is still Paid");
+
+        Order g = NewOrder(r, 8);
+        processor.CancelWithRefund(g);
+        Check(g.State == OrderState.Cancelled && g.PaymentStatus == PaymentStatus.Unpaid, "Cancelling an unpaid order needs no refund");
+    }
+
+    private static void PaymentMethodTests()
+    {
+        Console.WriteLine("=== TEST 6: Payment methods behind IPaymentMethod ===");
+        IPaymentMethod[] methods =
+        {
+            new EWalletPayment("Khang", 5000),
+            new CardPayment("4111 1111 1111 1111", 5000),
+            new CashPayment(5000)
+        };
+        bool allApproved = true;
+        foreach (IPaymentMethod m in methods)
+            if (!m.Charge(1000).Success) allApproved = false;
+        Check(allApproved, "Wallet, card and cash are all charged through the same interface");
+        Check(methods[0].Timing == PaymentTiming.Prepaid && methods[2].Timing == PaymentTiming.OnDelivery, "Each method reports its own timing");
+
+        var card = new CardPayment("4111111111111111", 200000);
+        PaymentResult ok = card.Charge(150000);
+        Check(ok.Success && card.AvailableCredit == 50000, "Card charge uses up credit");
+        Check(!card.Charge(60000).Success, "Card over its credit limit is declined");
+        Check(card.Refund(ok.TransactionId, 150000).Success && card.AvailableCredit == 200000, "Card refund restores the credit");
+        Check(!card.Refund(ok.TransactionId, 150000).Success, "The same transaction cannot be refunded twice");
+        Check(!new CardPayment("4111111111111112", 200000).Charge(1000).Success, "Card number failing the Luhn check is declined");
+        Check(!new CardPayment("4111111111111111", 200000).Charge(0).Success, "Zero amount is declined by the base class");
+
+        var wallet = new EWalletPayment("Khang", 100000);
+        PaymentResult w = wallet.Charge(40000);
+        Check(!wallet.Refund(w.TransactionId, 39999).Success, "Partial refund amount is declined");
+        Check(!wallet.Refund("WALLET-9999", 40000).Success, "Unknown transaction is declined");
+        Check(wallet.Refund(w.TransactionId, 40000).Success && wallet.Balance == 100000, "Correct refund restores the wallet balance");
+    }
+
+    private sealed class VoucherPayment : IPaymentMethod
+    {
+        public string Name => "Voucher";
+        public PaymentTiming Timing => PaymentTiming.Prepaid;
+        public int Refunds { get; private set; }
+
+        public PaymentResult Charge(long amount) =>
+            amount <= 200000 ? PaymentResult.Approved("VOUCHER-1") : PaymentResult.Declined("Voucher limit is 200000");
+
+        public PaymentResult Refund(string transactionId, long amount)
+        {
+            Refunds++;
+            return PaymentResult.Approved(transactionId, "Voucher restored");
+        }
+    }
+
+    private static void ExtensibilityTests()
+    {
+        Console.WriteLine("=== TEST 7: A new payment method needs no change to PaymentProcessor ===");
+        Restaurant r = NewRestaurant();
+        var processor = new PaymentProcessor();
+        var voucher = new VoucherPayment();
+
+        Order order = OrderConfirmed(r, 1);
+        PaymentRecord rec = processor.Pay(order, voucher);
+        Check(rec.MethodName == "Voucher" && order.PaymentStatus == PaymentStatus.Paid, "Processor accepts a brand-new IPaymentMethod implementation");
+        processor.CancelWithRefund(order);
+        Check(voucher.Refunds == 1 && order.PaymentStatus == PaymentStatus.Refunded, "Refund is routed to the same method that was charged");
+    }
 }

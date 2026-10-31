@@ -1,6 +1,7 @@
 using FoodDelivery.Dispatch;
 using FoodDelivery.Domain;
 using FoodDelivery.Pricing;
+using FoodDelivery.Payment;
 
 namespace FoodDelivery;
 
@@ -27,8 +28,13 @@ public static class Demo
         order.AddItem(new SizeUpgradeDecorator(restaurant.CreateItem(1), "Large", 130));
         Print(order);
 
+        var processor = new PaymentProcessor();
+        new ReceiptPrinter(Console.Out).Subscribe(processor);
 
         order.Confirm();
+        var wallet = new EWalletPayment("Khang", 500000);
+        processor.Pay(order, wallet);
+        Console.WriteLine($"  wallet balance after paying: {wallet.Balance} VND");
         order.StartPreparing();
         DeliveryDriver driver = assigner.Assign(order, drivers);
         Console.WriteLine($"  assigned driver: {driver.Name}, state: {order.State}");
